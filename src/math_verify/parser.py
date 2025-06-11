@@ -39,11 +39,12 @@ from sympy.parsing import parse_expr
 
 from math_verify.errors import TimeoutException
 from math_verify.grader import should_treat_as_complex
-from math_verify.utils import timeout
+from math_verify.utils import timeout, cache_decorator, shared_cache
 
 logger = logging.getLogger(__name__)
 
 TIMEOUT_WARNING_SHOWN = False
+extract_target_from_pred_with_cache = None
 
 
 @dataclass(frozen=True)
@@ -355,6 +356,7 @@ def lazy_latex_regex(
     return [(re.compile(pattern, re.DOTALL), priority) for pattern, priority in regexes]
 
 
+@cache_decorator
 def get_extraction_regexes(
     target_types: Sequence[ExtractionTarget],
 ) -> list[tuple[list[tuple[re.Pattern[str], int]], ExtractionTarget]]:
@@ -376,6 +378,7 @@ def get_extraction_regexes(
 
 
 # Small cache, to catche repeated calls invalid parsing
+@shared_cache()
 @lru_cache(maxsize=20)
 def parse_latex_cached(latex: str):
     # First try to parse the latex as is
@@ -497,6 +500,7 @@ def extract_latex(
         filter(lambda x: x is not None, [first_latex_group] + next_latex_groups)
     )
 
+
     for latex, name in all_latex:
         name_without_prefix = name.split("_")[0]
         group_name = name.split("_")[1] if len(name.split("_")) > 1 else None
@@ -516,7 +520,10 @@ def extract_latex(
         latex_strs.append(normalized_latex)
 
         try:
+            # import time
+            # st = time.time()
             parsed_latex = parse_latex_cached(normalized_latex)
+            # print(f'+++++: {time.time() - st}')
             if is_percentage:
                 parsed_latex = convert_to_pct(parsed_latex)
             latex_exprs.append(parsed_latex)
@@ -549,7 +556,7 @@ def extract_string(match: re.Match, string_config: StringExtractionConfig):
         parsed_str = extracted_str.lower()
     return parsed_str, extracted_str
 
-
+@shared_cache()
 def extract_match(
     match: re.Match, target_type: ExtractionTarget
 ) -> tuple[Basic | MatrixBase | str | None, str]:
@@ -571,12 +578,13 @@ def extract_match(
     elif isinstance(target_type, StringExtractionConfig):
         return extract_string(match, target_type)
 
-
+# @cache_decorator
 def extract_target_from_pred(
     pred: str,
     target_res: list[tuple[list[tuple[re.Pattern[str], int]], ExtractionTarget]],
     fallback_mode: Literal["no_fallback", "first_match"] = "no_fallback",
     extraction_mode: Literal["first_match", "any_match"] = "any_match",
+    log_path: str = None,
 ):
     """Extracts targets from a prediction string using regex patterns.
     Returns first sucesffuly extracted match.
@@ -625,7 +633,11 @@ def extract_target_from_pred(
 
         # Try to extract from each match, starting from rightmost
         for match, _, _, target_type in matches_with_pos:
+            # import time
+            # st = time.time()
             extracted_match, str_fallback = extract_match(match, target_type)
+            # print(f'======: {time.time() - st}')
+            # print(type(extracted_match))
 
             match_found = True
             if str_fallback:
@@ -657,6 +669,8 @@ def parse(
     fallback_mode: Literal["no_fallback", "first_match"] = "first_match",
     extraction_mode: Literal["first_match", "any_match"] = "any_match",
     parsing_timeout: int = 5,
+    use_cache: bool = False,
+    log_path: str = None,
 ):
     """Extracts and parses mathematical expressions from a prediction string.
 
@@ -699,23 +713,36 @@ def parse(
 
     try:
         target_res = get_extraction_regexes(extraction_config)
-        return timeout(timeout_seconds=parsing_timeout)(extract_target_from_pred)(
-            pred,
-            target_res,
-            fallback_mode=fallback_mode,
-            extraction_mode=extraction_mode,
-        )
+        if use_cache:
+            global extract_target_from_pred_with_cache
+            if extract_target_from_pred_with_cache is None:
+                extract_target_from_pred_with_cache = timeout(parsing_timeout, use_cache=True)(extract_target_from_pred)
+            return extract_target_from_pred_with_cache(
+                pred,
+                target_res,
+                fallback_mode=fallback_mode,
+                extraction_mode=extraction_mode,
+                log_path=log_path
+            )
+        else:
+            return timeout(parsing_timeout)(extract_target_from_pred)(
+                pred,
+                target_res,
+                fallback_mode=fallback_mode,
+                extraction_mode=extraction_mode,
+                log_path=log_path
+            )
     except ValueError as e:
         # Check if it's the signal error
         if str(e) == "signal only works in main thread of the main interpreter":
             raise ValueError(
                 "Math-Verify 'parse' function doesn't support threaded environment due to usage of signal.alarm() in timeout mechanism. If you need to run in multithreaded environment it's recommended to set the parsing_timeout=None, which will run without timeout (and signal handling). In this case you need to handle the timeouting yourself."
             ) from e
-        logger.exception(f"Error parsing: {pred}")
+        logger.exception(f"Error parsing: {[pred[-30:]]}")
         return []
     except Exception:
-        logger.exception(f"Error parsing: {pred}")
+        logger.exception(f"Error parsing: {[pred[-30:]]}")
         return []
     except TimeoutException:
-        logger.error(f"Timeout during parsing: {pred}")
+        logger.error(f"Timeout during parsing: {[pred[-30:]]}")
         return []

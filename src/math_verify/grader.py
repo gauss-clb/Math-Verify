@@ -58,11 +58,13 @@ from sympy.core.function import UndefinedFunction
 from sympy.core.relational import Relational
 
 from math_verify.errors import TimeoutException
-from math_verify.utils import timeout
+from math_verify.utils import timeout, write_jsonl
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 TIMEOUT_WARNING_SHOWN = False
+compare_single_extraction_with_cache = None
 
 
 INVERSE_RELATIONS = {
@@ -746,6 +748,7 @@ def verify(
     strict: bool = True,
     allow_set_relation_comp: bool = False,
     timeout_seconds: int | None = 5,
+    log_path: str = None,
 ) -> bool:
     """Verifies if the target expression matches the gold expression using multiple comparison strategies.
 
@@ -807,7 +810,7 @@ def verify(
         )
         TIMEOUT_WARNING_SHOWN = True
 
-    @timeout(timeout_seconds=timeout_seconds)
+
     def compare_single_extraction(
         gold: Basic | MatrixBase | str, target: Basic | MatrixBase | str
     ) -> bool:
@@ -833,18 +836,22 @@ def verify(
 
         return False
 
-    def compare_single_extraction_wrapper(g, t):
+    def compare_single_extraction_wrapper(g, t, log_path: str = None):
         try:
-            return compare_single_extraction(g, t)
+            global compare_single_extraction_with_cache
+            if compare_single_extraction_with_cache is None:
+                compare_single_extraction_with_cache = timeout(timeout_seconds)(compare_single_extraction)
+            return compare_single_extraction_with_cache(g, t)
 
         except ValueError as e:
             if str(e) == "signal only works in main thread of the main interpreter":
-                raise ValueError(
-                    "Math-Verify doesn't support threaded environment due to usage of signal.alarm() in timeout mechanism. If you need to run in multithreaded environment it's recommended to set the parsing_timeout=None, which will run without timeout (and signal handling). In this case you need to handle the timeouting yourself."
-                ) from e
+                # raise ValueError(
+                #     "Math-Verify doesn't support threaded environment due to usage of signal.alarm() in timeout mechanism. If you need to run in multithreaded environment it's recommended to set the parsing_timeout=None, which will run without timeout (and signal handling). In this case you need to handle the timeouting yourself."
+                # ) from e
+                logger.exception("Math-Verify doesn't support threaded environment due to usage of signal.alarm() in timeout mechanism. If you need to run in multithreaded environment it's recommended to set the parsing_timeout=None, which will run without timeout (and signal handling). In this case you need to handle the timeouting yourself.")
             else:
                 logger.exception("Error during comparison")
-                return False
+            return False
         except Exception:
             #! Do not attempt to print out the g and t during handling of exception
             # Because a) it can throw an exception itself and b) it can cause it to be stuck forever during str conversion
@@ -852,6 +859,9 @@ def verify(
             return False
         except TimeoutException:
             logger.error("Timeout during comparison")
+            # if log_path:
+            #     time_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            #     write_jsonl([{'time': time_now, 'first_expr': str(g), 'second_expr': str(t), 'status': 'timeout'}], log_path, 'a')
             return False
 
     if not isinstance(gold, list):
@@ -859,6 +869,10 @@ def verify(
     if not isinstance(target, list):
         target = [target]
 
-    return any(
-        compare_single_extraction_wrapper(g, t) for g, t in product(gold, target)
-    )
+    try:
+        return any(
+            compare_single_extraction_wrapper(g, t, log_path) for g, t in product(gold, target)
+        )
+    except:
+        logger.error("Verify Error")
+        return False
