@@ -520,10 +520,7 @@ def extract_latex(
         latex_strs.append(normalized_latex)
 
         try:
-            # import time
-            # st = time.time()
             parsed_latex = parse_latex_cached(normalized_latex)
-            # print(f'+++++: {time.time() - st}')
             if is_percentage:
                 parsed_latex = convert_to_pct(parsed_latex)
             latex_exprs.append(parsed_latex)
@@ -633,11 +630,7 @@ def extract_target_from_pred(
 
         # Try to extract from each match, starting from rightmost
         for match, _, _, target_type in matches_with_pos:
-            # import time
-            # st = time.time()
             extracted_match, str_fallback = extract_match(match, target_type)
-            # print(f'======: {time.time() - st}')
-            # print(type(extracted_match))
 
             match_found = True
             if str_fallback:
