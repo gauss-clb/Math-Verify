@@ -859,9 +859,6 @@ def verify(
             return False
         except TimeoutException:
             logger.error("Timeout during comparison")
-            # if log_path:
-            #     time_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            #     write_jsonl([{'time': time_now, 'first_expr': str(g), 'second_expr': str(t), 'status': 'timeout'}], log_path, 'a')
             return False
 
     if not isinstance(gold, list):

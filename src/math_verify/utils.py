@@ -287,13 +287,7 @@ def timeout(timeout_seconds: int = 10, use_cache: bool = False):
                         write_jsonl([{'time': time_now, 'first_expr': str(args[0]), 'status': 'queue_get'}], log_path, 'a')
                     else:
                         write_jsonl([{'time': time_now, 'first_expr': str(args[0]), 'second_expr': str(args[1]), 'status': 'queue_get'}], log_path, 'a')
-                import traceback
-                traceback.print_exc()
-                try:
-                    logger.error(f'Consume time[queue_get]: {time.time() - start} ...')
-                except:
-                    import traceback
-                    traceback.print_exc()
+                logger.error(f'Consume time[queue_get]: {time.time() - start} ...')
                 raise Exception("Queue get error!")
         return wrapper
     return decorator
